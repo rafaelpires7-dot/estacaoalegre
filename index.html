@@ -959,6 +959,7 @@
 /* ================= DATA & STORAGE ================= */
 const DATA = JSON.parse(document.getElementById('dataset-json').textContent);
 const LS_OV = 'lmi_espessura_overrides_v1';
+const LS_DEL = 'lmi_espessura_deleted_v1';
 const LS_META = 'lmi_espessura_meta_v1';
 const LS_CFG = 'lmi_espessura_config_v1';
 const LS_METERS = 'lmi_espessura_meters_v1';
@@ -983,6 +984,7 @@ function lsSet(key,val){ localStorage.setItem(key, JSON.stringify(val)); }
 function getLocalCloudState(){
   return {
     overrides: lsGet(LS_OV),
+    deleted: lsGet(LS_DEL),
     meta: lsGet(LS_META),
     config: lsGet(LS_CFG),
     meters: lsGet(LS_METERS)
@@ -992,6 +994,7 @@ function getLocalCloudState(){
 function applyCloudState(state){
   const s = state || {};
   lsSet(LS_OV, s.overrides || {});
+  lsSet(LS_DEL, s.deleted || {});
   lsSet(LS_META, s.meta || {});
   lsSet(LS_CFG, s.config || {});
   lsSet(LS_METERS, s.meters || {});
@@ -1178,10 +1181,50 @@ function saveReadingOverride(date, loop, values, operador, supervisor){
   ov[date] = ov[date] || {};
   ov[date][loop] = values; // {angle:{point:value}}
   lsSet(LS_OV, ov);
+  const del = lsGet(LS_DEL);
+  if(del[date]){
+    delete del[date][loop];
+    if(Object.keys(del[date]).length===0) delete del[date];
+    lsSet(LS_DEL, del);
+  }
   const meta = getMetaOverrides();
   meta[date] = {operador: operador || (meta[date]&&meta[date].operador) || '', supervisor: supervisor || (meta[date]&&meta[date].supervisor) || ''};
   lsSet(LS_META, meta);
   syncCloudState();
+}
+
+function deleteReadingLaunch(date, loop){
+  const del = lsGet(LS_DEL);
+  del[date] = del[date] || {};
+  del[date][loop] = true;
+  lsSet(LS_DEL, del);
+
+  const ov = getOverrides();
+  if(ov[date]){
+    delete ov[date][loop];
+    if(Object.keys(ov[date]).length===0) delete ov[date];
+    lsSet(LS_OV, ov);
+  }
+
+  const grid = getMergedGrid();
+  const otherLoopsRemain = DATA.loops.some(l => l !== loop && loopValuesAtDate(grid, date, l).length > 0);
+  if(!otherLoopsRemain){
+    const meta = getMetaOverrides();
+    if(meta[date]){ delete meta[date]; lsSet(LS_META, meta); }
+  }
+  syncCloudState();
+}
+
+function changeReadingDate(oldDate, loop, newDate){
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(newDate)) throw new Error('Data inválida.');
+  if(newDate === oldDate) return;
+  const grid = getMergedGrid();
+  const values = (grid[oldDate] && grid[oldDate][loop]) ? JSON.parse(JSON.stringify(grid[oldDate][loop])) : null;
+  if(!values || loopValuesAtDate(grid, oldDate, loop).length===0) throw new Error('Lançamento não encontrado.');
+  if(loopValuesAtDate(grid, newDate, loop).length>0) throw new Error('Já existe um lançamento para este loop na nova data.');
+  const meta = getMetaForDate(oldDate);
+  saveReadingOverride(newDate, loop, values, meta.operador || '', meta.supervisor || '');
+  deleteReadingLaunch(oldDate, loop);
 }
 
 function saveConfig(loop, pointCfg){
@@ -1244,6 +1287,14 @@ function getMergedGrid(){
         merged[date][loop][angle] = Object.assign({}, merged[date][loop][angle], ov[date][loop][angle]);
       }
     }
+  }
+  const del = lsGet(LS_DEL);
+  for(const date in del){
+    if(!merged[date]) continue;
+    for(const loop in del[date]){
+      delete merged[date][loop];
+    }
+    if(Object.keys(merged[date]).length===0) delete merged[date];
   }
   return merged;
 }
@@ -1705,15 +1756,49 @@ function renderHistTable(){
       <td>${r.meta.supervisor || '—'}</td>
       <td>${r.count}</td>
       <td>${fmt1(r.worst.value)} mm (${r.worst.point} · ${r.worst.angle})</td>
-      <td><button class="mini-btn" data-date="${r.date}" data-loop="${r.loop}">Editar</button></td>
+      <td style="white-space:nowrap;"><button class="mini-btn" data-action="edit" data-date="${r.date}" data-loop="${r.loop}">Editar</button> <button class="mini-btn" data-action="date" data-date="${r.date}" data-loop="${r.loop}">Alterar data</button> <button class="mini-btn" data-action="delete" data-date="${r.date}" data-loop="${r.loop}" style="color:#b42318;border-color:#f3c2bf;">Excluir</button></td>
     </tr>`).join('');
   tbody.querySelectorAll('button[data-date]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      document.getElementById('fLoop').value = btn.dataset.loop;
-      document.getElementById('fDateSelect').value = btn.dataset.date;
-      document.getElementById('fDateNew').value = '';
-      loadFormFromSelection();
-      window.scrollTo({top:0, behavior:'smooth'});
+      const action = btn.dataset.action;
+      const oldDate = btn.dataset.date;
+      const loop = btn.dataset.loop;
+      if(action === 'edit'){
+        document.getElementById('fLoop').value = loop;
+        document.getElementById('fDateSelect').value = oldDate;
+        document.getElementById('fDateNew').value = '';
+        loadFormFromSelection();
+        window.scrollTo({top:0, behavior:'smooth'});
+        return;
+      }
+      if(action === 'delete'){
+        if(!confirm(`Excluir o lançamento de ${fmtDateBR(oldDate)} do ${loop}?\n\nEsta ação remove o lançamento do histórico e dos gráficos.`)) return;
+        requireUnlock(()=>{
+          deleteReadingLaunch(oldDate, loop);
+          showToast('Lançamento excluído com sucesso.');
+          fillFormOptions();
+          renderHistTable();
+          renderGraficos();
+          renderDashboard();
+        });
+        return;
+      }
+      if(action === 'date'){
+        const newDate = prompt(`Informe a nova data para o lançamento ${loop} (AAAA-MM-DD):`, oldDate);
+        if(newDate === null) return;
+        const cleanDate = newDate.trim();
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)){ showToast('Use o formato AAAA-MM-DD.'); return; }
+        requireUnlock(()=>{
+          try{
+            changeReadingDate(oldDate, loop, cleanDate);
+            showToast('Data do lançamento alterada com sucesso.');
+            fillFormOptions();
+            renderHistTable();
+            renderGraficos();
+            renderDashboard();
+          }catch(e){ showToast(e.message || 'Não foi possível alterar a data.'); }
+        });
+      }
     });
   });
 }
