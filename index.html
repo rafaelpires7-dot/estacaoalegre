@@ -465,6 +465,13 @@
     .report-fields{grid-template-columns:1fr;}
     #mobileMenuBtn{display:flex !important;}
   }
+
+  .lock-status.dirty{color:#ffd28a;}
+  .lock-status.dirty .nav-dot{display:block;}
+  .lock-status .nav-dot{display:none;}
+  .gh-grid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px;margin-bottom:12px;}
+  .gh-token{margin-bottom:14px;}
+  @media (max-width:900px){.gh-grid{grid-template-columns:1fr;}}
 </style>
 </head>
 <body>
@@ -503,6 +510,11 @@
       <div class="lock-status" id="lockToggleBtn" title="Edição bloqueada — clique para desbloquear">
         <span class="lock-ic" id="lockIcon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="10.5" width="17" height="10" rx="2"/><path d="M7 10.5V7a5 5 0 0 1 10 0v3.5"/></svg></span>
         <span id="lockLabel">Edição bloqueada</span>
+      </div>
+      <div class="lock-status" id="ghSaveBtn" title="Salvar alterações no GitHub">
+        <span class="lock-ic"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H9a7 7 0 1 1 6.7-9h1.8a4.5 4.5 0 0 1 0 9z"/><polyline points="12 12 12 17"/><polyline points="9.5 14.5 12 12 14.5 14.5"/></svg></span>
+        <span id="ghSaveLabel">Salvar no GitHub</span>
+        <span class="nav-dot" id="ghDirtyDot"></span>
       </div>
     </nav>
     <div class="sidebar-footer"></div>
@@ -940,10 +952,28 @@
           <div style="display:flex;gap:10px;flex-wrap:wrap;">
             <button class="btn btn-primary" id="btnDownloadJson"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Baixar JSON</button>
             <button class="btn btn-secondary" id="btnLoadJson"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Carregar JSON atualizado</button>
-            <button class="btn btn-danger" id="btnResetDataset">Restaurar dados originais</button>
+            <button class="btn btn-danger" id="btnResetDataset">Descartar alterações não salvas</button>
             <input type="file" id="jsonFileInput" accept=".json,application/json" hidden>
           </div>
-          <div class="hint" style="margin-top:10px;font-size:11.5px;color:var(--gray-400);">Carregar um JSON substitui os dados exibidos neste navegador (requer senha de edição). Os dados ficam salvos no navegador; o arquivo HTML em si não é alterado.</div>
+          <div class="hint" style="margin-top:10px;font-size:11.5px;color:var(--gray-400);">Carregar um JSON substitui os dados exibidos neste navegador (requer senha de edição) e só vai para o GitHub depois que você clicar em Salvar no GitHub.</div>
+        </div>
+      
+        <div class="card" style="margin-top:16px;">
+          <div style="font-weight:800;font-size:15.5px;margin-bottom:3px;">Sincronização com GitHub</div>
+          <div class="section-sub" style="margin-bottom:12px;">Ao clicar em <b>Salvar no GitHub</b> (menu lateral), os dados são gravados no arquivo JSON do repositório. Qualquer computador que abrir o link do app carrega a versão mais recente.</div>
+          <div class="gh-grid">
+            <div class="field"><label>Repositório (usuário/repositório)</label><input type="text" id="ghRepo" placeholder="ex: minhaempresa/espessura-loops"></div>
+            <div class="field"><label>Branch</label><input type="text" id="ghBranch" placeholder="main"></div>
+            <div class="field"><label>Arquivo de dados</label><input type="text" id="ghPath" placeholder="dados.json"></div>
+          </div>
+          <div class="field gh-token"><label>Token de acesso (necessário só para salvar)</label>
+            <input type="password" id="ghToken" placeholder="github_pat_..." autocomplete="off">
+            <span class="hint">Fica guardado apenas neste navegador, nunca dentro do arquivo HTML. Cada computador onde você for salvar precisa do token uma vez.</span></div>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
+            <button class="btn btn-primary" id="btnGhSave">Salvar no GitHub</button>
+            <button class="btn btn-secondary" id="btnGhPull">Atualizar do GitHub</button>
+            <span id="ghStatus" style="font-size:12.5px;color:var(--gray-500);"></span>
+          </div>
         </div>
       </section>
 
@@ -985,7 +1015,7 @@ function loadActiveDataset(){
 function validateDataset(d){
   return d && Array.isArray(d.loops) && Array.isArray(d.angles) && Array.isArray(d.points) && d.grid && typeof d.grid==='object' && !Array.isArray(d.grid);
 }
-const DATA = loadActiveDataset();
+let DATA = loadActiveDataset();
 const LS_OV = 'lmi_espessura_overrides_v1';
 const LS_META = 'lmi_espessura_meta_v1';
 const LS_CFG = 'lmi_espessura_config_v1';
@@ -995,7 +1025,7 @@ const COLORS = {ok:'#1fa971', warn:'#e69a12', crit:'#e14a4f', none:'#9aa6b5'};
 const POINT_COLORS = ['#2f6feb','#1fa971','#e69a12','#e14a4f','#8b5cf6','#0e9f8e','#c026d3'];
 
 function lsGet(key){ try{ return JSON.parse(localStorage.getItem(key)||'{}'); }catch(e){ return {}; } }
-function lsSet(key,val){ localStorage.setItem(key, JSON.stringify(val)); }
+function lsSet(key,val){ localStorage.setItem(key, JSON.stringify(val)); if(typeof updateGhUI==='function') updateGhUI(); }
 
 /* ================= EDIT PROTECTION (PASSWORD) ================= */
 const ICON_LOCK_CLOSED_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="10.5" width="17" height="10" rx="2"/><path d="M7 10.5V7a5 5 0 0 1 10 0v3.5"/></svg>`;
@@ -1088,7 +1118,7 @@ function initLockUI(){
 
 function getOverrides(){ return lsGet(LS_OV); }
 function getMetaOverrides(){ return lsGet(LS_META); }
-function getConfig(){ return lsGet(LS_CFG); }
+function getConfig(){ return Object.assign({}, DATA.config||{}, lsGet(LS_CFG)); }
 
 function saveReadingOverride(date, loop, values, operador, supervisor){
   const ov = getOverrides();
@@ -1101,7 +1131,7 @@ function saveReadingOverride(date, loop, values, operador, supervisor){
 }
 
 function saveConfig(loop, pointCfg){
-  const cfg = getConfig();
+  const cfg = lsGet(LS_CFG);
   cfg[loop] = pointCfg;
   lsSet(LS_CFG, cfg);
 }
@@ -2190,13 +2220,159 @@ function initDataIO(){
     rd.readAsText(f);
   });
   document.getElementById('btnResetDataset').addEventListener('click', ()=>{
-    if(!confirm('Voltar aos dados originais do arquivo HTML? As alterações feitas no navegador (leituras, limites, horímetro) serão apagadas.')) return;
+    if(!confirm('Descartar as alterações ainda não salvas no GitHub (leituras, limites, horímetro) neste computador?')) return;
     requireUnlock(()=>{
       localStorage.removeItem(LS_DATASET);
       lsSet(LS_OV, {}); lsSet(LS_META, {}); lsSet(LS_METERS, {}); lsSet(LS_CFG, {});
       location.reload();
     });
   });
+}
+
+
+/* ================= GITHUB: LER / SALVAR ================= */
+const LS_GH = 'lmi_espessura_github_v1';
+let ghLoadedSha;   // undefined = não carregado do GitHub; null = arquivo ainda não existe
+let ghBusy = false;
+function ghDefaults(){
+  const d = {repo:'', branch:'main', path:'dados.json', token:''};
+  const h = location.hostname;
+  if(h.endsWith('.github.io')){
+    const owner = h.split('.')[0];
+    const seg = location.pathname.split('/').filter(Boolean)[0];
+    d.repo = owner + '/' + ((seg && !/\.html?$/i.test(seg)) ? seg : owner + '.github.io');
+  }
+  return d;
+}
+function getGh(){
+  let st = {}; try{ st = JSON.parse(localStorage.getItem(LS_GH)||'{}'); }catch(e){}
+  const d = ghDefaults();
+  return {repo:(st.repo||d.repo).trim(), branch:(st.branch||d.branch).trim(), path:(st.path||d.path).trim().replace(/^\/+/,''), token:(st.token||'').trim()};
+}
+function ghApiUrl(g){ return `https://api.github.com/repos/${g.repo}/contents/${g.path.split('/').map(encodeURIComponent).join('/')}`; }
+function ghHeaders(g){
+  const h = {'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'};
+  if(g.token) h['Authorization'] = 'Bearer ' + g.token;
+  return h;
+}
+function b64ToText(b64){ const bin = atob(b64.replace(/\s/g,'')); const u = Uint8Array.from(bin, c=>c.charCodeAt(0)); return new TextDecoder().decode(u); }
+function textToB64(t){ const u = new TextEncoder().encode(t); let bin=''; for(let i=0;i<u.length;i+=0x8000) bin += String.fromCharCode.apply(null, u.subarray(i,i+0x8000)); return btoa(bin); }
+function hasLocalChanges(){
+  const ne = k => Object.keys(lsGet(k)).length > 0;
+  return ne(LS_OV) || ne(LS_META) || ne(LS_METERS) || ne(LS_CFG) || !!localStorage.getItem(LS_DATASET);
+}
+function setGhStatus(msg){ const el = document.getElementById('ghStatus'); if(el) el.textContent = msg || ''; }
+function updateGhUI(){
+  const b = document.getElementById('ghSaveBtn'); if(!b) return;
+  const dirty = hasLocalChanges();
+  b.classList.toggle('dirty', dirty && !ghBusy);
+  document.getElementById('ghSaveLabel').textContent = ghBusy ? 'Salvando…' : (dirty ? 'Salvar no GitHub (pendente)' : 'Salvar no GitHub');
+}
+async function ghFetchRemote(){
+  const g = getGh();
+  if(g.repo){
+    try{
+      const r = await fetch(ghApiUrl(g) + '?ref=' + encodeURIComponent(g.branch) + '&t=' + Date.now(), {headers:ghHeaders(g), cache:'no-store'});
+      if(r.ok){
+        const j = await r.json();
+        let text = j.content ? b64ToText(j.content) : null;
+        if(text === null){
+          const r2 = await fetch(ghApiUrl(g) + '?ref=' + encodeURIComponent(g.branch), {headers:Object.assign(ghHeaders(g), {'Accept':'application/vnd.github.raw+json'}), cache:'no-store'});
+          text = await r2.text();
+        }
+        return {obj: JSON.parse(text), sha: j.sha};
+      }
+      if(r.status === 404) ghLoadedSha = null;
+    }catch(e){}
+  }
+  if(location.protocol.startsWith('http')){
+    try{
+      const r = await fetch(new URL(getGh().path, location.href).href + '?t=' + Date.now(), {cache:'no-store'});
+      if(r.ok) return {obj: await r.json(), sha: undefined};
+    }catch(e){}
+  }
+  return null;
+}
+function rerenderActiveView(){
+  const act = document.querySelector('.view.active'); if(!act) return;
+  const v = act.id.replace('view-','');
+  ({painel:renderPainel, lancamento:renderLancamento, graficos:renderGraficos, alertas:renderAlertas, relatorios:renderRelatorios, config:renderConfig})[v]();
+}
+function adoptRemote(obj){
+  DATA = {dates:Object.keys(obj.grid).sort(), loops:obj.loops, angles:obj.angles, points:obj.points, grid:obj.grid,
+          meta_by_date:obj.meta_by_date||{}, meters:obj.meters||{}, config:obj.config||{}};
+}
+async function loadRemoteData(manual){
+  if(localStorage.getItem(LS_DATASET)){
+    if(!manual) return;
+    if(!confirm('Há um JSON carregado manualmente e ainda não salvo. Descartá-lo e usar o que está no GitHub?')) return;
+    localStorage.removeItem(LS_DATASET);
+  }
+  setGhStatus('Buscando dados no GitHub…');
+  const rem = await ghFetchRemote();
+  if(!rem || !validateDataset(rem.obj)){
+    setGhStatus(manual ? 'Não foi possível ler o arquivo no GitHub (confira repositório, branch, arquivo e token).' : '');
+    if(manual) showToast('Não foi possível carregar do GitHub.');
+    return;
+  }
+  adoptRemote(rem.obj);
+  if(rem.sha !== undefined) ghLoadedSha = rem.sha;
+  setGhStatus('Dados carregados do GitHub (' + DATA.dates.length + ' datas).');
+  rerenderActiveView(); updateGhUI();
+  if(manual) showToast('Dados atualizados a partir do GitHub.');
+}
+async function saveToGithub(){
+  if(ghBusy) return;
+  const g = getGh();
+  if(!g.repo || !g.token){ showToast('Informe repositório e token em Configurações.'); switchView('config'); return; }
+  if(!hasLocalChanges()){ showToast('Nenhuma alteração pendente para salvar.'); return; }
+  ghBusy = true; updateGhUI(); setGhStatus('Salvando no GitHub…');
+  try{
+    const url = ghApiUrl(g);
+    const cur = await fetch(url + '?ref=' + encodeURIComponent(g.branch) + '&t=' + Date.now(), {headers:ghHeaders(g), cache:'no-store'});
+    let sha = null;
+    if(cur.status === 200){ sha = (await cur.json()).sha; }
+    else if(cur.status !== 404){ throw {status:cur.status}; }
+    if(ghLoadedSha !== undefined && sha !== ghLoadedSha){
+      if(!confirm('O arquivo no GitHub foi alterado por outro computador/pessoa desde que você abriu o app. Salvar agora vai sobrescrever essas alterações. Continuar?')){
+        ghBusy = false; updateGhUI(); setGhStatus('Salvamento cancelado.'); return;
+      }
+    }
+    const obj = buildExportObject();
+    const body = {message:'Atualização de dados de espessura — ' + new Date().toLocaleString('pt-BR'), content:textToB64(JSON.stringify(obj)), branch:g.branch};
+    if(sha) body.sha = sha;
+    const put = await fetch(url, {method:'PUT', headers:Object.assign(ghHeaders(g), {'Content-Type':'application/json'}), body:JSON.stringify(body)});
+    if(!put.ok) throw {status:put.status};
+    const out = await put.json();
+    ghLoadedSha = out.content && out.content.sha;
+    adoptRemote(obj);
+    [LS_OV, LS_META, LS_METERS, LS_CFG].forEach(k=> localStorage.setItem(k, '{}'));
+    localStorage.removeItem(LS_DATASET);
+    ghBusy = false; updateGhUI(); rerenderActiveView();
+    setGhStatus('Salvo em ' + new Date().toLocaleTimeString('pt-BR') + '.');
+    showToast('Salvo no GitHub. Os outros computadores verão a atualização ao abrir/recarregar o app.');
+  }catch(e){
+    ghBusy = false; updateGhUI();
+    const st = e && e.status;
+    const msg = st===401 ? 'Token inválido ou expirado.' : st===403 ? 'Sem permissão: o token precisa de "Contents: Read and write" neste repositório.' :
+                st===404 ? 'Repositório, branch ou arquivo não encontrado (ou token sem acesso a ele).' : (st===409||st===422) ? 'Conflito de versão. Clique em "Atualizar do GitHub" e tente de novo.' : 'Falha de conexão com o GitHub.';
+    setGhStatus(msg); showToast(msg);
+  }
+}
+function initGithub(){
+  const g = getGh();
+  const f = {ghRepo:'repo', ghBranch:'branch', ghPath:'path', ghToken:'token'};
+  Object.keys(f).forEach(id=>{
+    const el = document.getElementById(id); el.value = g[f[id]] || '';
+    el.addEventListener('change', ()=>{
+      const cur = getGh(); cur[f[id]] = el.value.trim();
+      localStorage.setItem(LS_GH, JSON.stringify(cur));
+      showToast('Configuração do GitHub salva neste computador.');
+    });
+  });
+  document.getElementById('ghSaveBtn').addEventListener('click', ()=> requireUnlock(saveToGithub));
+  document.getElementById('btnGhSave').addEventListener('click', ()=> requireUnlock(saveToGithub));
+  document.getElementById('btnGhPull').addEventListener('click', ()=> loadRemoteData(true));
 }
 
 /* Compatibilidade: alguns carregadores chamam renderDashboard().
@@ -2213,7 +2389,10 @@ function init(){
   initConfigEvents();
   initLockUI();
   initDataIO();
+  initGithub();
   renderPainel();
+  updateGhUI();
+  loadRemoteData(false);
 }
 document.addEventListener('DOMContentLoaded', init);
 
